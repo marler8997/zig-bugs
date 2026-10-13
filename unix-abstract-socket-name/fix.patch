@@ -1,0 +1,13 @@
+diff --git a/Io/Threaded.zig b/Io/Threaded.zig
+index 2c7cdbc..cc0c09c 100644
+--- a/Io/Threaded.zig
++++ b/Io/Threaded.zig
+@@ -14389,7 +14389,7 @@ fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.so
+     // With the AFD API, `sockaddr.un` is purely informational, so
+     // use a suffix which is usually the most relevant part of a path.
+     @memcpy(storage.un.path[0..path_len], a.path[a.path.len - path_len ..]);
+-    if (storage.un.path.len - path_len > 0) {
++    if (!a.isAbstract() and storage.un.path.len - path_len > 0) {
+         @branchHint(.likely);
+         storage.un.path[path_len] = 0;
+         path_len += 1;

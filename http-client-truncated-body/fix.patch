@@ -1,0 +1,54 @@
+diff --git a/http.zig b/http.zig
+index c2966cb..5959c86 100644
+--- a/http.zig
++++ b/http.zig
+@@ -365,6 +365,7 @@ pub const Reader = struct {
+     pub const BodyError = error{
+         HttpChunkInvalid,
+         HttpChunkTruncated,
++        HttpContentLengthTruncated,
+         HttpHeadersOversize,
+     };
+ 
+@@ -515,7 +516,13 @@ pub const Reader = struct {
+         if (reader.state == .ready) return error.EndOfStream;
+         const remaining_content_length = &reader.state.body_remaining_content_length;
+         const remaining = remaining_content_length.*;
+-        const n = try reader.in.stream(w, limit.min(.limited64(remaining)));
++        const n = reader.in.stream(w, limit.min(.limited64(remaining))) catch |err| switch (err) {
++            error.EndOfStream => {
++                reader.body_err = error.HttpContentLengthTruncated;
++                return error.ReadFailed;
++            },
++            else => |e| return e,
++        };
+         if (n == remaining) {
+             reader.state = .ready;
+         } else {
+@@ -529,7 +536,13 @@ pub const Reader = struct {
+         if (reader.state == .ready) return error.EndOfStream;
+         const remaining_content_length = &reader.state.body_remaining_content_length;
+         const remaining = remaining_content_length.*;
+-        const n = try reader.in.discard(limit.min(.limited64(remaining)));
++        const n = reader.in.discard(limit.min(.limited64(remaining))) catch |err| switch (err) {
++            error.EndOfStream => {
++                reader.body_err = error.HttpContentLengthTruncated;
++                return error.ReadFailed;
++            },
++            else => |e| return e,
++        };
+         if (n == remaining) {
+             reader.state = .ready;
+         } else {
+diff --git a/http/Client.zig b/http/Client.zig
+index b0f9461..49fbc2c 100644
+--- a/http/Client.zig
++++ b/http/Client.zig
+@@ -1099,6 +1099,7 @@ pub const Request = struct {
+         HttpContentEncodingUnsupported,
+         HttpChunkInvalid,
+         HttpChunkTruncated,
++        HttpContentLengthTruncated,
+         HttpHeadersOversize,
+         UnsupportedUriScheme,
+ 

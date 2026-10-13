@@ -1,0 +1,56 @@
+diff --git a/http/Client.zig b/http/Client.zig
+index b0f9461..8a03c20 100644
+--- a/http/Client.zig
++++ b/http/Client.zig
+@@ -1482,41 +1482,29 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
+     }
+ }
+ 
+-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError || Io.Cancelable;
++pub const ConnectUnixError = Allocator.Error || Io.net.UnixAddress.InitError || Io.net.UnixAddress.ConnectError;
+ 
+ /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
+ ///
+ /// This function is threadsafe.
+ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
+     const io = client.io;
++    const host: HostName = .{ .bytes = path };
+ 
+     if (try client.connection_pool.findConnection(io, .{
+-        .host = path,
++        .host = host,
+         .port = 0,
+         .protocol = .plain,
+-    })) |node|
+-        return node;
+-
+-    const conn = try client.allocator.create(ConnectionPool.Node);
+-    errdefer client.allocator.destroy(conn);
+-    conn.* = .{ .data = undefined };
++    })) |conn| return conn;
+ 
+-    const stream = try Io.net.connectUnixSocket(path);
++    const address: Io.net.UnixAddress = try .init(path);
++    var stream = try address.connect(io);
+     errdefer stream.close(io);
+ 
+-    conn.data = .{
+-        .stream = stream,
+-        .tls_client = undefined,
+-        .protocol = .plain,
+-
+-        .host = try client.allocator.dupe(u8, path),
+-        .port = 0,
+-    };
+-    errdefer client.allocator.free(conn.data.host);
+-
+-    try client.connection_pool.addUsed(conn);
+-
+-    return &conn.data;
++    const pc = try Connection.Plain.create(client, host, 0, stream);
++    errdefer pc.destroy();
++    try client.connection_pool.addUsed(io, &pc.connection);
++    return &pc.connection;
+ }
+ 
+ /// Connect to `proxied_host:proxied_port` using the specified proxy with HTTP
