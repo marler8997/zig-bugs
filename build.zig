@@ -16,6 +16,8 @@ const bugs = [_]Bug{
     .{ .name = "http-client-truncated-body", .reproduces = .{ .exit_code = 1 }, .has_fix_patch = true },
     .{ .name = "macos-create-file-enoent", .reproduces = .{ .exit_code = 1 }, .only_os = .macos, .has_fix_patch = false },
     .{ .name = "unix-abstract-socket-name", .reproduces = .{ .exit_code = 1 }, .only_os = .linux, .has_fix_patch = true },
+    // only reproduces under wine: zig build test -Dtarget=x86_64-windows -fwine
+    .{ .name = "wine-host-name-lookup-segfault", .reproduces = .{ .exit_code = 3 }, .only_os = .windows, .has_fix_patch = true },
 };
 
 pub fn build(b: *std.Build) void {

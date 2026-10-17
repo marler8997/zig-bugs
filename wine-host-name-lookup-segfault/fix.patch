@@ -1,0 +1,54 @@
+diff --git a/Io/Threaded.zig b/Io/Threaded.zig
+index 2c7cdbc..ab76870 100644
+--- a/Io/Threaded.zig
++++ b/Io/Threaded.zig
+@@ -14908,7 +14908,8 @@ fn lookupHosts(
+ ) !void {
+     const path_w = if (is_windows) path_w: {
+         var path_w_buf: [windows.PATH_MAX_WIDE:0]u16 = undefined;
+-        const system_dir = windows.getSystemDirectoryWtf16Le();
++        // without the system directory there is no hosts file to check
++        const system_dir = windows.getSystemDirectoryWtf16Le() orelse return error.UnknownHostName;
+         const suffix = [_]u16{
+             '\\', 'd', 'r', 'i', 'v', 'e', 'r', 's', '\\', 'e', 't', 'c', '\\', 'h', 'o', 's', 't', 's',
+         };
+@@ -16941,7 +16942,8 @@ const WindowsCommandLineCache = struct {
+     fn cmdExePath(self: *WindowsCommandLineCache) Allocator.Error![:0]u16 {
+         if (self.cmd_exe_path == null) {
+             // Remove trailing slash from system directory path; we'll re-add it below
+-            const system_dir = std.mem.trimEnd(u16, windows.getSystemDirectoryWtf16Le(), &.{ '/', '\\' });
++            const system_dir = std.mem.trimEnd(u16, windows.getSystemDirectoryWtf16Le() orelse
++                @panic("cmd.exe path unknown, the PEB has no static server data"), &.{ '/', '\\' });
+             const suffix = std.unicode.utf8ToUtf16LeStringLiteral("\\cmd.exe");
+             const buf = try self.allocator.allocSentinel(u16, system_dir.len + suffix.len, 0);
+             errdefer comptime unreachable;
+diff --git a/os/windows.zig b/os/windows.zig
+index bdac980..24c05d1 100644
+--- a/os/windows.zig
++++ b/os/windows.zig
+@@ -5153,7 +5153,8 @@ pub const PEB = extern struct {
+     SharedData: PVOID,
+ 
+     // Versions: all
+-    ReadOnlyStaticServerData: *UnknownStaticServerDataIndirection,
++    /// Null under Wine.
++    ReadOnlyStaticServerData: ?*UnknownStaticServerDataIndirection,
+     AnsiCodePageData: PVOID,
+     OemCodePageData: PVOID,
+     UnicodeCaseTableData: PVOID,
+@@ -6019,10 +6020,12 @@ pub fn wtf8ToWtf16Le(wtf16le: []u16, wtf8: []const u8) error{ BadPathName, NameT
+ 
+ /// Returns the path to the system directory, typically "C:\\WINDOWS\\System32".
+ ///
+-/// Equivalent to `GetSystemDirectoryW` in kernel32.
+-pub fn getSystemDirectoryWtf16Le() [:0]const u16 {
++/// Equivalent to `GetSystemDirectoryW` in kernel32. Returns null if the PEB
++/// doesn't have the static server data, i.e. under Wine.
++pub fn getSystemDirectoryWtf16Le() ?[:0]const u16 {
++    const indirection = peb().ReadOnlyStaticServerData orelse return null;
+     const ssd: *const BASE_STATIC_SERVER_DATA = @ptrCast(@alignCast(relocateCsrssAddress(
+-        peb().ReadOnlyStaticServerData.base_static_server_data_addr,
++        indirection.base_static_server_data_addr,
+     )));
+     return ssd.windows_system_directory.relocate().sliceZ();
+ }
