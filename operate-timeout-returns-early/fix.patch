@@ -1,0 +1,15 @@
+diff --git a/Io/Threaded.zig b/Io/Threaded.zig
+index 2c7cdbc..37578f2 100644
+--- a/Io/Threaded.zig
++++ b/Io/Threaded.zig
+@@ -2912,7 +2912,9 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
+             }
+             const d = deadline orelse break :t -1;
+             const duration = d.durationFromNow(t_io);
+-            break :t @min(@max(0, duration.raw.toMilliseconds()), std.math.maxInt(i32));
++            // round up, otherwise poll times out before the deadline
++            const ms = std.math.divCeil(i96, @max(0, duration.raw.nanoseconds), std.time.ns_per_ms) catch unreachable;
++            break :t @intCast(@min(ms, std.math.maxInt(i32)));
+         };
+         const syscall = try Syscall.start();
+         const rc = posix.system.poll(poll_storage.slice.ptr, poll_storage.len, timeout_ms);
