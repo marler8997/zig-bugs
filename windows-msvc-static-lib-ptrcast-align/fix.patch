@@ -1,0 +1,10 @@
+diff --git a/debug/SelfInfo/Windows.zig b/debug/SelfInfo/Windows.zig
+--- a/debug/SelfInfo/Windows.zig
++++ b/debug/SelfInfo/Windows.zig
+@@ -665,5 +665,5 @@
+ ) !@TypeOf(&@field(windows.ntdll, @tagName(proc))) {
+     return if (load_dll_notification_procs)
+-        @ptrCast(try si.loadNtdllProc(@tagName(proc)))
++        @ptrCast(@alignCast(try si.loadNtdllProc(@tagName(proc))))
+     else
+         &@field(windows.ntdll, @tagName(proc));
