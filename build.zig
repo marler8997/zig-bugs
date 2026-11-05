@@ -24,6 +24,7 @@ const bugs = [_]Bug{
     .{ .name = "operate-timeout-returns-early", .reproduces = .{ .exit_code = 1 }, .only_os = .linux, .has_fix_patch = true },
     // only reproduces under wine: zig build test -Dtarget=x86_64-windows -fwine
     .{ .name = "wine-host-name-lookup-segfault", .reproduces = .{ .exit_code = 3 }, .only_os = .windows, .has_fix_patch = true },
+    .{ .name = "windows-extern-same-name-different-dll", .reproduces = .{ .exit_code = 1 }, .only_os = .windows, .has_fix_patch = false },
     .{
         .name = "windows-msvc-static-lib-ptrcast-align",
         .reproduces = .{ .compile_error = "@ptrCast increases pointer alignment" },
