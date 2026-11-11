@@ -23,6 +23,7 @@ const Bug = struct {
     target: ?std.Target.Query = null,
     /// repro.zig is a static library's root, and fix.patch fixes it if it compiles
     static_lib: bool = false,
+    optimize: std.builtin.Optimize = .debug,
     has_fix_patch: bool,
 };
 
@@ -60,6 +61,9 @@ const bugs = [_]Bug{
         } },
         .has_fix_patch = false,
     },
+    .{ .name = "threaded-init-failing-allocator", .reproduces = .{ .exit_code = 1 }, .has_fix_patch = false },
+    // in debug the payload is written on purpose, undefined memory is set to 0xaa
+    .{ .name = "error-return-copies-payload", .reproduces = .{ .exit_code = 1 }, .optimize = .small, .has_fix_patch = false },
 };
 
 pub fn build(b: *std.Build) void {
@@ -94,7 +98,7 @@ pub fn build(b: *std.Build) void {
             repro_step.dependOn(&run.step);
             continue;
         }
-        const stock = addRepro(b, bug, bug.name, b.createModule(.{ .root_source_file = repro_path, .target = target }));
+        const stock = addRepro(b, bug, bug.name, b.createModule(.{ .root_source_file = repro_path, .target = target, .optimize = bug.optimize }));
         switch (bug.reproduces) {
             .exit_code => |code| {
                 const run = b.addRunArtifact(stock);
@@ -117,6 +121,7 @@ pub fn build(b: *std.Build) void {
         const fixed = addRepro(b, bug, b.fmt("{s}-fixed", .{bug.name}), b.createModule(.{
             .root_source_file = repro_path,
             .target = target,
+            .optimize = bug.optimize,
             .imports = &.{.{ .name = "std", .module = patched_std }},
         }));
         if (bug.static_lib) {
