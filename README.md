@@ -4,17 +4,22 @@ This repo houses bugs for zig.  The purpose is to have a place to both find and 
 
 ## Layout
 
+Bugs are grouped by where they live:
+
+- `std/`: bugs in `lib/std`
+- `compiler/`: bugs in the compiler, including `lib/compiler` (for example aro, the C frontend)
+
 Each bug is a directory with:
 
 - `README.md`: follows zig's [bug report template](https://codeberg.org/ziglang/zig/src/branch/master/.forgejo/ISSUE_TEMPLATE/bug.yml) (Zig Version; Steps to Reproduce, Observed Behavior, and Expected Behavior), so it converts directly to an upstream issue, followed by Cause, Workaround and Fix
 - `repro.zig`: a program that fails (exit code or compile error) while the bug is present
-- `fix.patch` (optional): a diff against `lib/std`, applied with [zig-patch](https://github.com/marler8997/zig-patch)
+- `fix.patch` (optional, `std/` only): a diff against `lib/std`, applied with [zig-patch](https://github.com/marler8997/zig-patch)
 
-`zig build test` checks that every bug still reproduces with stock std and that its `fix.patch`, if it has one, fixes it. Each bug also has its own `repro-<name>` step, plus `fixed-<name>` if it has a patch (see `zig build --help`). To add a bug, add an entry to `bugs` in `build.zig` (set `has_fix_patch` to say whether it has a `fix.patch`).
+`zig build test` checks that every bug still reproduces with stock std and that its `fix.patch`, if it has one, fixes it. Each bug also has its own `repro-<name>` step, plus `fixed-<name>` if it has a patch (see `zig build --help`). To add a bug, add an entry to `std_bugs` or `compiler_bugs` in `build.zig` (set `has_fix_patch` to say whether it has a `fix.patch`).
 
-Bugs outside std:
+Options for compiler bugs:
 
-- `uses_aro`: `repro.zig` imports aro, the C frontend in `lib/compiler/aro`.
-- `debug_compiler_panic`: for compiler bugs that only show up in a Debug compiler with the checking allocator.
-  - `zig build` fetches the 0.17.0 source (the lazy `zig` dependency) and builds that compiler. This takes about a minute and 5 GB of RAM, once.
+- `uses_aro`: `repro.zig` imports aro from `lib/compiler/aro`.
+- `debug_compiler_panic`: for compiler bugs that only show up reliably in a Debug compiler with the checking allocator.
+  - `zig build` fetches the 0.17.0 source (the lazy `zig` dependency) and builds that compiler with `compiler/build_options.zig`. This takes about a minute and 5 GB of RAM, once.
   - The step passes when compiling `repro.zig` with that compiler prints the expected panic.

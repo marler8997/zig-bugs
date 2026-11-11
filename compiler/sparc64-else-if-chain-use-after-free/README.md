@@ -25,7 +25,7 @@ export fn f(a: u32) u32 {
 }
 ```
 
-The shipped compiler compiles this without complaint, so the bug only shows in a Debug compiler built with `debug_gpa`. `zig build` builds one from the 0.17.0 source tarball (the lazy `zig` dependency, about a minute and 5 GB of RAM) and runs:
+The shipped compiler compiled this repro in 59 of 60 runs. The other run exited with code 1, and its output wasn't captured. The bug shows reliably in a Debug compiler built with `debug_gpa`. `zig build` builds one from the 0.17.0 source tarball (the lazy `zig` dependency, about a minute and 5 GB of RAM) and runs:
 
 ```
 zig build repro-sparc64-else-if-chain-use-after-free

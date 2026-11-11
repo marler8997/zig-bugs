@@ -27,7 +27,8 @@ const Bug = struct {
     has_fix_patch: bool,
 };
 
-const bugs = [_]Bug{
+/// std/: bugs in lib/std
+const std_bugs = [_]Bug{
     .{ .name = "http-client-connect-unix", .reproduces = .{ .compile_error = "has no member named 'SocketError'" }, .has_fix_patch = true },
     .{ .name = "http-client-truncated-body", .reproduces = .{ .exit_code = 1 }, .has_fix_patch = true },
     .{ .name = "macos-create-file-enoent", .reproduces = .{ .exit_code = 1 }, .only_os = .macos, .has_fix_patch = false },
@@ -36,7 +37,6 @@ const bugs = [_]Bug{
     .{ .name = "operate-timeout-returns-early", .reproduces = .{ .exit_code = 1 }, .only_os = .linux, .has_fix_patch = true },
     // only reproduces under wine: zig build test -Dtarget=x86_64-windows -fwine
     .{ .name = "wine-host-name-lookup-segfault", .reproduces = .{ .exit_code = 3 }, .only_os = .windows, .has_fix_patch = true },
-    .{ .name = "windows-extern-same-name-different-dll", .reproduces = .{ .exit_code = 1 }, .only_os = .windows, .has_fix_patch = false },
     .{
         .name = "windows-msvc-static-lib-ptrcast-align",
         .reproduces = .{ .compile_error = "@ptrCast increases pointer alignment" },
@@ -44,6 +44,12 @@ const bugs = [_]Bug{
         .static_lib = true,
         .has_fix_patch = true,
     },
+    .{ .name = "threaded-init-failing-allocator", .reproduces = .{ .exit_code = 1 }, .has_fix_patch = false },
+};
+
+/// compiler/: bugs in the compiler, including lib/compiler (aro)
+const compiler_bugs = [_]Bug{
+    .{ .name = "windows-extern-same-name-different-dll", .reproduces = .{ .exit_code = 1 }, .only_os = .windows, .has_fix_patch = false },
     .{ .name = "aro-knr-param-use-after-free", .reproduces = .{ .exit_code = 1 }, .uses_aro = true, .has_fix_patch = false },
     .{
         .name = "spirv-nested-array-constant-use-after-free",
@@ -61,7 +67,22 @@ const bugs = [_]Bug{
         } },
         .has_fix_patch = false,
     },
-    .{ .name = "threaded-init-failing-allocator", .reproduces = .{ .exit_code = 1 }, .has_fix_patch = false },
+    .{
+        .name = "spirv-tuple-type-use-after-free",
+        .reproduces = .{ .debug_compiler_panic = .{
+            .args = &.{ "-target", "spirv64-opencl", "-ofmt=spirv" },
+            .stderr = "panic: write after free",
+        } },
+        .has_fix_patch = false,
+    },
+    .{
+        .name = "spirv-call-constant-arg-use-after-free",
+        .reproduces = .{ .debug_compiler_panic = .{
+            .args = &.{ "-target", "spirv64-opencl", "-ofmt=spirv" },
+            .stderr = "panic: write after free",
+        } },
+        .has_fix_patch = false,
+    },
     // in debug the payload is written on purpose, undefined memory is set to 0xaa
     .{ .name = "error-return-copies-payload", .reproduces = .{ .exit_code = 1 }, .optimize = .small, .has_fix_patch = false },
 };
@@ -70,19 +91,25 @@ pub fn build(b: *std.Build) void {
     const default_target = b.standardTargetOptions(.{});
     const test_step = b.step("test", "Check every bug reproduces with stock std and is fixed by its fix.patch, if it has one");
     var debug_compiler: ?DebugCompiler = null;
-    for (bugs) |bug| {
+    const groups = [_]struct { dir: []const u8, bugs: []const Bug }{
+        .{ .dir = "std", .bugs = &std_bugs },
+        .{ .dir = "compiler", .bugs = &compiler_bugs },
+    };
+    for (groups) |group| for (group.bugs) |bug| {
+        // the bug's directory, e.g. std/http-client-connect-unix
+        const dir = b.fmt("{s}/{s}", .{ group.dir, bug.name });
         const target = if (bug.target) |query| b.resolveTargetQuery(query) else default_target;
         if (bug.only_os) |os| if (target.result.os.tag != os) continue;
         const repro_step = b.step(b.fmt("repro-{s}", .{bug.name}), "Check the bug reproduces with stock std");
         test_step.dependOn(repro_step);
 
-        const repro_path = b.path(b.fmt("{s}/repro.zig", .{bug.name}));
+        const repro_path = b.path(b.fmt("{s}/repro.zig", .{dir}));
         if (bug.reproduces == .debug_compiler_panic) {
             const expect = bug.reproduces.debug_compiler_panic;
             if (debug_compiler == null) debug_compiler = addDebugCompiler(b) orelse continue;
             const compiler = debug_compiler.?;
             const run = b.addRunArtifact(compiler.exe);
-            run.setName(b.fmt("compile {s}/repro.zig with the Debug compiler", .{bug.name}));
+            run.setName(b.fmt("compile {s}/repro.zig with the Debug compiler", .{dir}));
             run.addArgs(&.{ "build-obj", "-fno-llvm" });
             run.addArgs(expect.args);
             run.addFileArg(repro_path);
@@ -98,7 +125,7 @@ pub fn build(b: *std.Build) void {
             repro_step.dependOn(&run.step);
             continue;
         }
-        const stock = addRepro(b, bug, bug.name, b.createModule(.{ .root_source_file = repro_path, .target = target, .optimize = bug.optimize }));
+        const stock = addRepro(b, bug, dir, bug.name, b.createModule(.{ .root_source_file = repro_path, .target = target, .optimize = bug.optimize }));
         switch (bug.reproduces) {
             .exit_code => |code| {
                 const run = b.addRunArtifact(stock);
@@ -116,9 +143,9 @@ pub fn build(b: *std.Build) void {
         const fixed_step = b.step(b.fmt("fixed-{s}", .{bug.name}), "Check fix.patch fixes the bug");
         test_step.dependOn(fixed_step);
         const patched_std = b.dependency("patch", .{
-            .std_patches = &[_]std.Build.LazyPath{b.path(b.fmt("{s}/fix.patch", .{bug.name}))},
+            .std_patches = &[_]std.Build.LazyPath{b.path(b.fmt("{s}/fix.patch", .{dir}))},
         }).module("std");
-        const fixed = addRepro(b, bug, b.fmt("{s}-fixed", .{bug.name}), b.createModule(.{
+        const fixed = addRepro(b, bug, dir, b.fmt("{s}-fixed", .{bug.name}), b.createModule(.{
             .root_source_file = repro_path,
             .target = target,
             .optimize = bug.optimize,
@@ -131,16 +158,16 @@ pub fn build(b: *std.Build) void {
             run.expectExitCode(0);
             fixed_step.dependOn(&run.step);
         }
-    }
+    };
 }
 
-fn addRepro(b: *std.Build, bug: Bug, name: []const u8, module: *std.Build.Module) *std.Build.Step.Compile {
-    if (bug.uses_aro) addAro(b, bug, module);
+fn addRepro(b: *std.Build, bug: Bug, dir: []const u8, name: []const u8, module: *std.Build.Module) *std.Build.Step.Compile {
+    if (bug.uses_aro) addAro(b, dir, module);
     if (bug.static_lib) return b.addLibrary(.{ .linkage = .static, .name = name, .root_module = module });
     return b.addExecutable(.{ .name = name, .root_module = module });
 }
 
-fn addAro(b: *std.Build, bug: Bug, module: *std.Build.Module) void {
+fn addAro(b: *std.Build, dir: []const u8, module: *std.Build.Module) void {
     const target = module.resolved_target.?;
     const aro = b.createModule(.{
         .root_source_file = std.Build.LazyPath.zig_lib.path(b, "compiler/aro/aro.zig"),
@@ -153,8 +180,8 @@ fn addAro(b: *std.Build, bug: Bug, module: *std.Build.Module) void {
     });
     aro.addImport("aro", aro);
     aro.addImport("assembly_backend", assembly_backend);
-    aro.addImport("build_options", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_build_options.zig", .{bug.name})) }));
-    aro.addImport("system_defaults", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_system_defaults.zig", .{bug.name})) }));
+    aro.addImport("build_options", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_build_options.zig", .{dir})) }));
+    aro.addImport("system_defaults", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_system_defaults.zig", .{dir})) }));
     module.addImport("aro", aro);
 }
 
@@ -177,7 +204,7 @@ fn addDebugCompiler(b: *std.Build) ?DebugCompiler {
             .optimize = .Debug,
             .imports = &.{.{
                 .name = "build_options",
-                .module = b.createModule(.{ .root_source_file = b.path("compiler_build_options.zig") }),
+                .module = b.createModule(.{ .root_source_file = b.path("compiler/build_options.zig") }),
             }},
         }),
     });

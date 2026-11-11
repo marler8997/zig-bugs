@@ -20,7 +20,7 @@ export fn k(out: *addrspace(.global) [N][M]u32) callconv(.kernel) void {
 }
 ```
 
-The shipped compiler compiles this without complaint, so the bug only shows in a Debug compiler built with `debug_gpa`. `zig build` builds one from the 0.17.0 source tarball (the lazy `zig` dependency, about a minute and 5 GB of RAM) and runs:
+The shipped compiler compiled this repro in 40 of 40 runs, because the freed memory still holds the written ids when they're read back. Two other bugs with the same pattern, [spirv-tuple-type-use-after-free](../spirv-tuple-type-use-after-free) and [spirv-call-constant-arg-use-after-free](../spirv-call-constant-arg-use-after-free), sometimes make the shipped compiler segfault with larger inputs. The bug shows reliably in a Debug compiler built with `debug_gpa`. `zig build` builds one from the 0.17.0 source tarball (the lazy `zig` dependency, about a minute and 5 GB of RAM) and runs:
 
 ```
 zig build repro-spirv-nested-array-constant-use-after-free

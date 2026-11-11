@@ -19,6 +19,6 @@
         "build.zig",
         "build.zig.zon",
         "README.md",
-        "compiler_build_options.zig",
+        "compiler/build_options.zig",
     },
 }
