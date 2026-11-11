@@ -6,7 +6,18 @@ const Bug = struct {
     reproduces: union(enum) {
         exit_code: u8,
         compile_error: []const u8,
+        /// A bug in the compiler itself that only shows up as a panic in a Debug compiler
+        /// with the checking allocator. Builds the 0.17.0 compiler from source (the lazy
+        /// `zig` dependency) that way, then compiles repro.zig with it.
+        debug_compiler_panic: struct {
+            args: []const []const u8,
+            /// a substring of the Debug compiler's stderr
+            stderr: []const u8,
+        },
     },
+    /// repro.zig imports `aro` (lib/compiler/aro from the zig running the build), with
+    /// `aro_build_options.zig` and `aro_system_defaults.zig` from the bug's directory
+    uses_aro: bool = false,
     only_os: ?std.Target.Os.Tag = null,
     /// builds for this target instead of -Dtarget, for bugs that are compile errors on one target
     target: ?std.Target.Query = null,
@@ -32,11 +43,29 @@ const bugs = [_]Bug{
         .static_lib = true,
         .has_fix_patch = true,
     },
+    .{ .name = "aro-knr-param-use-after-free", .reproduces = .{ .exit_code = 1 }, .uses_aro = true, .has_fix_patch = false },
+    .{
+        .name = "spirv-nested-array-constant-use-after-free",
+        .reproduces = .{ .debug_compiler_panic = .{
+            .args = &.{ "-target", "spirv64-opencl", "-ofmt=spirv" },
+            .stderr = "panic: write after free",
+        } },
+        .has_fix_patch = false,
+    },
+    .{
+        .name = "sparc64-else-if-chain-use-after-free",
+        .reproduces = .{ .debug_compiler_panic = .{
+            .args = &.{ "-target", "sparc64-linux" },
+            .stderr = "in airCondBr",
+        } },
+        .has_fix_patch = false,
+    },
 };
 
 pub fn build(b: *std.Build) void {
     const default_target = b.standardTargetOptions(.{});
     const test_step = b.step("test", "Check every bug reproduces with stock std and is fixed by its fix.patch, if it has one");
+    var debug_compiler: ?DebugCompiler = null;
     for (bugs) |bug| {
         const target = if (bug.target) |query| b.resolveTargetQuery(query) else default_target;
         if (bug.only_os) |os| if (target.result.os.tag != os) continue;
@@ -44,6 +73,27 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(repro_step);
 
         const repro_path = b.path(b.fmt("{s}/repro.zig", .{bug.name}));
+        if (bug.reproduces == .debug_compiler_panic) {
+            const expect = bug.reproduces.debug_compiler_panic;
+            if (debug_compiler == null) debug_compiler = addDebugCompiler(b) orelse continue;
+            const compiler = debug_compiler.?;
+            const run = b.addRunArtifact(compiler.exe);
+            run.setName(b.fmt("compile {s}/repro.zig with the Debug compiler", .{bug.name}));
+            run.addArgs(&.{ "build-obj", "-fno-llvm" });
+            run.addArgs(expect.args);
+            run.addFileArg(repro_path);
+            run.addArg("--zig-lib-dir");
+            run.addDirectoryArg(compiler.lib);
+            _ = run.addPrefixedOutputFileArg("-femit-bin=", "repro.o");
+            // fresh caches, so the Debug compiler never shares a cache with a release one
+            run.addArg("--cache-dir");
+            _ = run.addOutputDirectoryArg("cache");
+            run.addArg("--global-cache-dir");
+            _ = run.addOutputDirectoryArg("global-cache");
+            run.addCheck(.{ .expect_stderr_match = expect.stderr });
+            repro_step.dependOn(&run.step);
+            continue;
+        }
         const stock = addRepro(b, bug, bug.name, b.createModule(.{ .root_source_file = repro_path, .target = target }));
         switch (bug.reproduces) {
             .exit_code => |code| {
@@ -55,6 +105,7 @@ pub fn build(b: *std.Build) void {
                 stock.expect_errors = .{ .contains = message };
                 repro_step.dependOn(&stock.step);
             },
+            .debug_compiler_panic => unreachable,
         }
 
         if (!bug.has_fix_patch) continue;
@@ -79,6 +130,52 @@ pub fn build(b: *std.Build) void {
 }
 
 fn addRepro(b: *std.Build, bug: Bug, name: []const u8, module: *std.Build.Module) *std.Build.Step.Compile {
+    if (bug.uses_aro) addAro(b, bug, module);
     if (bug.static_lib) return b.addLibrary(.{ .linkage = .static, .name = name, .root_module = module });
     return b.addExecutable(.{ .name = name, .root_module = module });
+}
+
+fn addAro(b: *std.Build, bug: Bug, module: *std.Build.Module) void {
+    const target = module.resolved_target.?;
+    const aro = b.createModule(.{
+        .root_source_file = std.Build.LazyPath.zig_lib.path(b, "compiler/aro/aro.zig"),
+        .target = target,
+    });
+    const assembly_backend = b.createModule(.{
+        .root_source_file = std.Build.LazyPath.zig_lib.path(b, "compiler/aro/assembly_backend.zig"),
+        .target = target,
+        .imports = &.{.{ .name = "aro", .module = aro }},
+    });
+    aro.addImport("aro", aro);
+    aro.addImport("assembly_backend", assembly_backend);
+    aro.addImport("build_options", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_build_options.zig", .{bug.name})) }));
+    aro.addImport("system_defaults", b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/aro_system_defaults.zig", .{bug.name})) }));
+    module.addImport("aro", aro);
+}
+
+const DebugCompiler = struct {
+    exe: *std.Build.Step.Compile,
+    /// the lib directory from the same source, which the compiler must be paired with
+    lib: std.Build.LazyPath,
+};
+
+/// The 0.17.0 compiler built from source for the host in Debug, without LLVM and with
+/// `debug_gpa`, so use-after-free in the compiler panics. null until the lazy `zig`
+/// dependency has been fetched.
+fn addDebugCompiler(b: *std.Build) ?DebugCompiler {
+    const src = b.lazyDependency("zig", .{}) orelse return null;
+    const exe = b.addExecutable(.{
+        .name = "zig-debug",
+        .root_module = b.createModule(.{
+            .root_source_file = src.path("zig-0.17.0/src/main.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .imports = &.{.{
+                .name = "build_options",
+                .module = b.createModule(.{ .root_source_file = b.path("compiler_build_options.zig") }),
+            }},
+        }),
+    });
+    exe.stack_size = 64 * 1024 * 1024;
+    return .{ .exe = exe, .lib = src.path("zig-0.17.0/lib") };
 }

@@ -8,10 +8,17 @@
             .url = "git+https://github.com/marler8997/zig-patch#c3ad78b305ba03bcd645c0bac004d1719407c6b8",
             .hash = "patch-0.0.0-WCKjsxixAADfwXQv4Vugyxo6PFbDFuuyM7ly3OiqZRYR",
         },
+        // the 0.17.0 compiler source, for `debug_compiler_panic` bugs
+        .zig = .{
+            .url = "https://ziglang.org/download/0.17.0/zig-0.17.0.tar.xz",
+            .hash = "N-V-__8AAIigSQ6N-eULdn4_APB175LENUhqcOhupQGmSEAf",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "README.md",
+        "compiler_build_options.zig",
     },
 }
